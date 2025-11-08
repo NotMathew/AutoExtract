@@ -26,10 +26,10 @@ An intelligent archive extraction tool that automatically processes compressed f
 
 **📦 Dependencies**
 
-    ```
-    patool
-    rarfile
-    ```
+```
+patool
+rarfile 
+```
 
 ## Installation on Windows 10/11
 
@@ -43,3 +43,4 @@ cd AutoExtract
 sudo python -m pip install -r requirements.txt
 python AutoExtract.py
 ```
+
