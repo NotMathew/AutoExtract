@@ -1,3 +1,5 @@
+# AutoExtract
+
 **📋 Description**
 
 An intelligent archive extraction tool that automatically processes compressed files across multiple formats with advanced password handling and file management capabilities.
@@ -43,4 +45,5 @@ cd AutoExtract
 sudo python -m pip install -r requirements.txt
 python AutoExtract.py
 ```
+
 
