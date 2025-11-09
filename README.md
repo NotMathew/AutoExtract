@@ -42,8 +42,9 @@ Go to [Releases](https://github.com/NotMathew/AutoExtract.git) and download the 
 ```
 git clone https://github.com/NotMathew/AutoExtract.git
 cd AutoExtract
-sudo python -m pip install -r requirements.txt
-python AutoExtract.py
+sudo python -m pip install -r requirements.txt --break-system-packages
+sudo python AutoExtract.py
 ```
+
 
 
