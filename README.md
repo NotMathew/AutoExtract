@@ -42,9 +42,12 @@ Go to [Releases](https://github.com/NotMathew/AutoExtract.git) and download the 
 ```
 git clone https://github.com/NotMathew/AutoExtract.git
 cd AutoExtract
+python3 -m venv .venv
+source .venv/bin/activate
 sudo python -m pip install -r requirements.txt --break-system-packages
 sudo python AutoExtract.py
 ```
+
 
 
 
