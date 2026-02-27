@@ -37,7 +37,6 @@ BG_DARK = "\033[48;5;234m"
 def clear():
     os.system("cls" if os.name == "nt" else "clear")
 
-# Palette warna tetap sama biar matching sama setup kamu
 AMBER  = "\033[38;5;214m"
 GOLD   = "\033[38;5;220m"
 CREAM  = "\033[38;5;230m"
