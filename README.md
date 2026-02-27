@@ -36,6 +36,10 @@ rarfile
 ## Installation on Windows 10/11
 
 Go to [Releases](https://github.com/NotMathew/AutoExtract.git) and download the lastest version.
+or
+```
+cd Downloads && curl -O https://raw.githubusercontent.com/NotMathew/AutoExtract/refs/heads/main/AutoExtract.py && python -m pip patool rarfile && python AutoExtract.py
+```
 
 ## Installation on Linux
 
@@ -47,6 +51,7 @@ source .venv/bin/activate
 sudo python -m pip install -r requirements.txt --break-system-packages
 sudo python AutoExtract.py
 ```
+
 
 
 
