@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AutoExtract — Archive Extraction Tool
+AutoExtract - Archive Extraction Tool
 """
 
 import os
@@ -18,7 +18,7 @@ B  = "\033[1m"
 D  = "\033[2m"
 IT = "\033[3m"
 
-# Warm amber/orange palette — feels like unpacking treasure
+# Warm amber/orange palette - feels like unpacking treasure
 AMBER  = "\033[38;5;214m"
 GOLD   = "\033[38;5;220m"
 ORANGE = "\033[38;5;208m"
@@ -292,7 +292,7 @@ class ArchiveExtractor:
     def _ask_target(self):
         t = input(f"  {TEAL}⤷  Target folder: {R}").strip().strip('"').strip("'")
         if not os.path.exists(t):
-            c = input(f"  {AMBER}Doesn't exist — create it? [y/N]: {R}").strip().lower()
+            c = input(f"  {AMBER}Doesn't exist - create it? [y/N]: {R}").strip().lower()
             if c == "y":
                 try: os.makedirs(t, exist_ok=True); print(f"  {SAGE}✓  Created.{R}"); return t
                 except OSError as e: print(f"  {ROSE}✗  {e}{R}"); return None
@@ -366,7 +366,7 @@ class ArchiveExtractor:
         if self.results["fail"]:
             print(f"\n  {ROSE}Failed:{R}")
             for r in self.results["fail"]:
-                print(f"  {MUTED}  ·  {os.path.basename(r['path'])} — {r['msg']}{R}")
+                print(f"  {MUTED}  ·  {os.path.basename(r['path'])} - {r['msg']}{R}")
 
         if self.results["ok"]:
             print(f"\n  {SAGE}Extracted:{R}")
