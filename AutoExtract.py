@@ -1,618 +1,413 @@
+#!/usr/bin/env python3
+"""
+AutoExtract — Archive Extraction Tool
+"""
+
 import os
-import zipfile
 import shutil
 from pathlib import Path
 import sys
 from collections import defaultdict
 import subprocess
 import platform
+from datetime import datetime
 
+# Terminal Colors
+R  = "\033[0m"
+B  = "\033[1m"
+D  = "\033[2m"
+IT = "\033[3m"
+
+# Warm amber/orange palette — feels like unpacking treasure
+AMBER  = "\033[38;5;214m"
+GOLD   = "\033[38;5;220m"
+ORANGE = "\033[38;5;208m"
+CREAM  = "\033[38;5;230m"
+BROWN  = "\033[38;5;130m"
+TEAL   = "\033[38;5;73m"
+SAGE   = "\033[38;5;108m"
+ROSE   = "\033[38;5;210m"
+MUTED  = "\033[38;5;245m"
+WHITE  = "\033[97m"
+RED    = "\033[91m"
+GREEN  = "\033[92m"
+
+BG_DARK = "\033[48;5;234m"
+
+def clear():
+    os.system("cls" if os.name == "nt" else "clear")
+
+# Palette warna tetap sama biar matching sama setup kamu
+AMBER  = "\033[38;5;214m"
+GOLD   = "\033[38;5;220m"
+CREAM  = "\033[38;5;230m"
+B      = "\033[1m"
+DIM    = "\033[2m"
+R      = "\033[0m"
+
+def banner():
+    print(f"""
+{AMBER}{B}  ╭─ {GOLD}AUTOEXTRACT {CREAM}v1.0{AMBER} ────────────────────────────╮
+  │  {GOLD}█▀█ █░█ ▀█▀ █▀█ █▀▀ ▀▄▀ ▀█▀ █▀█ █▀█ █▀▀ ▀█▀{AMBER}  │
+  │  {GOLD}█▀█ █▄█ ░█░ █▄█ ██▄ █░█ ░█░ █▀▄ █▀█ █▄▄ ░█░{AMBER}  │
+  │  {DIM}───────────────────────────────────────────{R}{AMBER}  │
+  │  {CREAM}Smarter Archive Unpacker & File Manager{AMBER}      │
+  ╰───────────────────────────────────────────────╯{R}
+""")
+
+def rule(char="─", n=65, color=MUTED):
+    print(f"{color}{char * n}{R}")
+
+def header(text, icon="◈"):
+    print(f"\n{GOLD}{B}{icon} {text}{R}")
+    rule("╌", color=AMBER)
+
+def fmt_size(b):
+    for u in ("B","KB","MB","GB","TB"):
+        if b < 1024: return f"{b:.1f} {u}"
+        b /= 1024
+    return f"{b:.1f} PB"
+
+def badge(text, color=TEAL):
+    return f"{color}{B} {text} {R}"
+
+def pause(msg="↵  Press Enter to continue"):
+    input(f"\n{MUTED}{IT}{msg}{R}  ")
+
+def spin_progress(i, total, label=""):
+    frames = ["⠋","⠙","⠹","⠸","⠼","⠴","⠦","⠧","⠇","⠏"]
+    frame = frames[i % len(frames)]
+    pct = int(i / total * 30)
+    bar = f"{AMBER}{'━' * pct}{MUTED}{'─' * (30 - pct)}{R}"
+    print(f"  {GOLD}{frame}{R}  [{bar}]  {MUTED}{i}/{total}  {D}{label[:28]}{R}", end="\r")
+
+
+# ArchiveExtractor
 class ArchiveExtractor:
+    SUPPORTED = {'.zip','.rar','.7z','.tar','.gz','.bz2','.xz',
+                 '.tar.gz','.tar.bz2','.tar.xz'}
+
     def __init__(self):
-        self.supported_formats = {'.zip', '.rar', '.7z', '.tar', '.gz', '.bz2', '.xz', '.tar.gz', '.tar.bz2', '.tar.xz'}
-        self.extraction_results = defaultdict(list)
-        self.total_archives = 0
-        self.successful_extractions = 0
-        self.failed_extractions = 0
-        self.password_protected = 0
-        self.global_password = None
-        self.all_extracted_files = []
-        
-    def format_size(self, size_bytes):
-        """Convert bytes to human readable format"""
-        for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
-            if size_bytes < 1024.0:
-                return f"{size_bytes:.2f} {unit}"
-            size_bytes /= 1024.0
-        return f"{size_bytes:.2f} PB"
-    
-    def get_archive_size(self, filepath):
-        """Get the size of the archive file"""
-        try:
-            return os.path.getsize(filepath)
-        except OSError:
-            return 0
-    
-    def find_archives(self, directory, recursive=True):
-        """Find all supported archive files in directory"""
-        archives = []
-        print(f"🔍 Searching for archive files in: {directory}")
-        
+        self.results    = defaultdict(list)
+        self.total      = 0
+        self.success    = 0
+        self.failed     = 0
+        self.pw_count   = 0
+        self.global_pw  = None
+        self.extracted  = []
+
+    def is_archive(self, fp):
+        return Path(fp).suffix.lower() in self.SUPPORTED
+
+    def find_archives(self, directory, recursive):
+        found = []
         if recursive:
-            for root, dirs, files in os.walk(directory):
-                for file in files:
-                    filepath = os.path.join(root, file)
-                    if self.is_supported_archive(filepath):
-                        archives.append(filepath)
+            for root, _, files in os.walk(directory):
+                for f in files:
+                    fp = os.path.join(root, f)
+                    if self.is_archive(fp): found.append(fp)
         else:
             for item in os.listdir(directory):
-                filepath = os.path.join(directory, item)
-                if os.path.isfile(filepath) and self.is_supported_archive(filepath):
-                    archives.append(filepath)
-        
-        return archives
-    
-    def is_supported_archive(self, filepath):
-        """Check if file is a supported archive format"""
-        extension = Path(filepath).suffix.lower()
-        return extension in self.supported_formats
-    
-    def ask_scan_mode(self):
-        """Ask user whether to scan current directory only or include subdirectories"""
-        print("\n📁 Scan Mode Selection")
-        print("1. Current directory only (no subdirectories)")
-        print("2. Current directory and all subdirectories (recursive)")
-        
-        while True:
-            choice = input("\nEnter your choice (1-2): ").strip()
-            if choice == '1':
-                return False
-            elif choice == '2':
-                return True
-            else:
-                print("Invalid choice! Please enter 1 or 2.")
-    
-    def ask_password_policy(self):
-        """Ask user about password handling policy"""
-        print("\n🔐 Password Handling")
-        print("If encrypted archives are found, how should passwords be handled?")
-        print("1. Ask for password for each encrypted archive")
-        print("2. Use same password for all encrypted archives")
-        print("3. Skip all encrypted archives")
-        
-        while True:
-            choice = input("\nEnter your choice (1-3): ").strip()
-            if choice == '1':
-                return 'ask_each'
-            elif choice == '2':
-                self.global_password = input("Enter the password to use for all archives: ").strip()
-                return 'use_global'
-            elif choice == '3':
-                return 'skip_all'
-            else:
-                print("Invalid choice! Please enter 1, 2, or 3.")
-    
-    def get_extraction_path(self, archive_path):
-        """Generate extraction path based on archive name"""
-        archive_dir = os.path.dirname(archive_path)
-        archive_name = Path(archive_path).stem
-        extraction_dir = os.path.join(archive_dir, archive_name)
-        
-        counter = 1
-        original_dir = extraction_dir
-        while os.path.exists(extraction_dir):
-            extraction_dir = f"{original_dir}_{counter}"
-            counter += 1
-        
-        return extraction_dir
-    
-    def collect_extracted_files(self, extraction_path):
-        """Collect all files from extraction directory"""
-        extracted_files = []
-        total_size = 0
-        
+                fp = os.path.join(directory, item)
+                if os.path.isfile(fp) and self.is_archive(fp): found.append(fp)
+        return sorted(found)
+
+    def get_out_path(self, archive_path):
+        base = os.path.join(os.path.dirname(archive_path), Path(archive_path).stem)
+        path, n = base, 1
+        while os.path.exists(path): path = f"{base}_{n}"; n += 1
+        return path
+
+    def collect(self, out_path):
+        files, total = [], 0
+        for root, _, filenames in os.walk(out_path):
+            for f in filenames:
+                fp = os.path.join(root, f)
+                try:
+                    sz = os.path.getsize(fp)
+                    files.append({'path': fp, 'size': sz,
+                                  'rel': os.path.relpath(fp, out_path)})
+                    total += sz
+                except OSError: pass
+        return files, total
+
+    def find_7zip(self):
+        paths = (["C:\\Program Files\\7-Zip\\7z.exe","7z.exe","7z"]
+                 if platform.system()=="Windows"
+                 else ["/usr/bin/7z","/usr/bin/7za","/usr/local/bin/7z","7z","7za"])
+        for p in paths:
+            if os.path.exists(p): return p
+            try:
+                r = subprocess.run([p,"--help"],capture_output=True,timeout=5,check=False)
+                if r.returncode in (0,1): return p
+            except: pass
+        return None
+
+    def extract_7zip(self, archive, out, password=None):
+        exe = self.find_7zip()
+        if not exe: return False, "7-Zip not found"
+        cmd = [exe, "x", archive, f"-o{out}", "-y"]
+        if password: cmd.append(f"-p{password}")
         try:
-            for root, dirs, files in os.walk(extraction_path):
-                for file in files:
-                    filepath = os.path.join(root, file)
-                    try:
-                        file_size = os.path.getsize(filepath)
-                        extracted_files.append({
-                            'path': filepath,
-                            'size': file_size,
-                            'relative_path': os.path.relpath(filepath, extraction_path)
-                        })
-                        total_size += file_size
-                    except OSError:
-                        continue
-        except OSError:
-            pass
-        
-        return extracted_files, total_size
-    
-    def extract_with_patool(self, archive_path, extraction_path, password=None):
-        """Extract archive using patool (handles most formats)"""
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+            if r.returncode == 0: return True, "ok"
+            err = (r.stderr + r.stdout).lower()
+            if "wrong password" in err or "encrypted" in err:
+                self.pw_count += 1
+                return False, "Wrong password or encrypted"
+            return False, f"7z error code {r.returncode}"
+        except subprocess.TimeoutExpired: return False, "Timed out"
+        except Exception as e: return False, str(e)
+
+    def extract_patool(self, archive, out, password=None):
         try:
             import patoolib
-            # Create extraction directory
-            os.makedirs(extraction_path, exist_ok=True)
-            
-            if password:
-                # Try with password first
-                try:
-                    patoolib.extract_archive(archive_path, outdir=extraction_path, password=password)
-                    return True, "Success"
-                except patoolib.util.PatoolError:
-                    # If password fails, try without (some archives might not need it)
-                    try:
-                        patoolib.extract_archive(archive_path, outdir=extraction_path)
-                        return True, "Success"
-                    except patoolib.util.PatoolError as e:
-                        error_msg = str(e)
-                        if 'password' in error_msg.lower() or 'encrypted' in error_msg.lower():
-                            self.password_protected += 1
-                            return False, "Password required or incorrect password"
-                        else:
-                            return False, error_msg
-            else:
-                patoolib.extract_archive(archive_path, outdir=extraction_path)
-                return True, "Success"
-                
-        except patoolib.util.PatoolError as e:
-            error_msg = str(e)
-            if 'password' in error_msg.lower() or 'encrypted' in error_msg.lower():
-                self.password_protected += 1
-                return False, "Password required or incorrect password"
-            else:
-                return False, error_msg
-        except Exception as e:
-            return False, str(e)
-    
-    def get_7zip_paths(self):
-        """Get 7-Zip executable paths for current platform"""
-        if platform.system() == "Windows":
-            return [
-                "C:\\Program Files\\7-Zip\\7z.exe",
-                "C:\\Program Files (x86)\\7-Zip\\7z.exe",
-                "7z.exe",
-                "7z"
-            ]
-        else:  # Linux, macOS, etc.
-            return [
-                "/usr/bin/7z",
-                "/usr/bin/7za",
-                "/usr/local/bin/7z",
-                "/usr/local/bin/7za",
-                "7z",
-                "7za"
-            ]
-    
-    def find_7zip_executable(self):
-        """Find 7-Zip executable in system"""
-        seven_zip_paths = self.get_7zip_paths()
-        
-        for path in seven_zip_paths:
-            # Check if path exists
-            if os.path.exists(path):
-                return path
-            
-            # Check if command is in PATH
+            os.makedirs(out, exist_ok=True)
+            kw = {"password": password} if password else {}
             try:
-                if platform.system() == "Windows":
-                    result = subprocess.run([path, "--help"], capture_output=True, timeout=5, check=False)
-                else:
-                    result = subprocess.run([path, "--help"], capture_output=True, timeout=5, check=False)
-                
-                if result.returncode in [0, 1]:  # 7z returns 1 for --help on some systems
-                    return path
-            except (subprocess.TimeoutExpired, FileNotFoundError, PermissionError):
-                continue
-        
-        return None
-    
-    def extract_with_7zip(self, archive_path, extraction_path, password=None):
-        """Extract using 7-Zip command line (most reliable)"""
-        try:
-            seven_zip_exe = self.find_7zip_executable()
-            
-            if not seven_zip_exe:
-                return False, "7-Zip not found. Please install 7-Zip/p7zip"
-            
-            # Build 7-Zip command
-            if platform.system() == "Windows":
-                cmd = [seven_zip_exe, "x", archive_path, f"-o{extraction_path}", "-y"]
-            else:
-                cmd = [seven_zip_exe, "x", archive_path, f"-o{extraction_path}", "-y"]
-            
-            if password:
-                cmd.extend([f"-p{password}"])
-            
-            # Run 7-Zip
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
-            
-            if result.returncode == 0:
-                return True, "Success"
-            else:
-                error_output = result.stderr.lower() + result.stdout.lower()
-                if "wrong password" in error_output or "encrypted" in error_output:
-                    self.password_protected += 1
-                    return False, "Wrong password or encrypted archive"
-                elif "not supported" in error_output:
-                    return False, "Compression method not supported"
-                else:
-                    return False, f"7-Zip error (code {result.returncode}): {result.stderr}"
-                    
-        except subprocess.TimeoutExpired:
-            return False, "Extraction timed out"
-        except Exception as e:
-            return False, str(e)
-    
-    def extract_archive(self, archive_path, password_policy, current_password=None):
-        """Extract a single archive file"""
-        archive_name = os.path.basename(archive_path)
-        extraction_path = self.get_extraction_path(archive_path)
-        archive_size = self.get_archive_size(archive_path)
-        
-        print(f"\n📦 Extracting: {archive_name} ({self.format_size(archive_size)})")
-        print(f"   Destination: {extraction_path}")
-        
-        # Handle password
-        password = current_password
-        max_attempts = 3
-        attempts = 0
-        
-        while attempts < max_attempts:
-            # If we don't have a password and policy is ask_each, ask for it
-            if password_policy == 'ask_each' and not password:
-                use_password = input(f"Does '{archive_name}' require a password? (y/N): ").strip().lower()
-                if use_password == 'y':
-                    password = input(f"Enter password for '{archive_name}': ").strip()
-                    self.password_protected += 1
-            
-            # Try extraction methods in order of reliability
-            success = False
-            message = "Extraction failed"
-            
-            # Method 1: Try 7-Zip first (most reliable)
-            success, message = self.extract_with_7zip(archive_path, extraction_path, password)
-            
-            if not success and "7-Zip not found" in message:
-                # Method 2: Fall back to patool if 7-Zip not available
-                success, message = self.extract_with_patool(archive_path, extraction_path, password)
-            
-            if success:
-                break
-            elif "password" in message.lower() and password_policy == 'ask_each' and attempts < max_attempts - 1:
-                print(f"   ❌ Failed: {message}")
-                password = input(f"Enter password for '{archive_name}' (attempt {attempts + 2}/{max_attempts}): ").strip()
-                attempts += 1
-                continue
-            else:
-                break
-        
-        # Clean up empty extraction directory if extraction failed
-        if not success:
+                patoolib.extract_archive(archive, outdir=out, **kw)
+                return True, "ok"
+            except patoolib.util.PatoolError as e:
+                msg = str(e)
+                if "password" in msg.lower() or "encrypted" in msg.lower():
+                    self.pw_count += 1
+                    return False, "Password required or incorrect"
+                return False, msg
+        except Exception as e: return False, str(e)
+
+    def extract_one(self, archive_path, pw_policy, current_pw=None):
+        name    = os.path.basename(archive_path)
+        out     = self.get_out_path(archive_path)
+        size    = os.path.getsize(archive_path) if os.path.exists(archive_path) else 0
+
+        print(f"\n  {AMBER}▸{R} {WHITE}{B}{name}{R}  {MUTED}({fmt_size(size)}){R}")
+        print(f"    {MUTED}⤷ {out}{R}")
+
+        pw, max_tries, tries = current_pw, 3, 0
+        ok, msg = False, "Extraction failed"
+
+        while tries < max_tries:
+            if pw_policy == "ask_each" and not pw:
+                ask = input(f"    {TEAL}⚿  Password required? [y/N]: {R}").strip().lower()
+                if ask == "y":
+                    pw = input(f"    {TEAL}⚿  Password: {R}").strip()
+                    self.pw_count += 1
+
+            ok, msg = self.extract_7zip(archive_path, out, pw)
+            if not ok and "not found" in msg:
+                ok, msg = self.extract_patool(archive_path, out, pw)
+
+            if ok: break
+            if "password" in msg.lower() and pw_policy=="ask_each" and tries < max_tries-1:
+                print(f"    {ROSE}✗  {msg}{R}")
+                pw = input(f"    {TEAL}⚿  Retry password ({tries+2}/{max_tries}): {R}").strip()
+                tries += 1
+            else: break
+
+        if not ok:
             try:
-                if os.path.exists(extraction_path) and not os.listdir(extraction_path):
-                    os.rmdir(extraction_path)
-            except OSError:
-                pass
-        
-        # Record result
-        result = {
-            'path': archive_path,
-            'success': success,
-            'message': message,
-            'size': archive_size,
-            'extraction_path': extraction_path if success else None
-        }
-        
-        if success:
-            extracted_files, total_size = self.collect_extracted_files(extraction_path)
-            result['extracted_files'] = extracted_files
-            result['extracted_size'] = total_size
-            result['file_count'] = len(extracted_files)
-            self.all_extracted_files.extend(extracted_files)
-            self.successful_extractions += 1
-            print(f"   ✅ Success: {message}")
-            print(f"   📁 Extracted {len(extracted_files)} files ({self.format_size(total_size)})")
-            self.extraction_results['success'].append(result)
+                if os.path.exists(out) and not os.listdir(out): os.rmdir(out)
+            except OSError: pass
+
+        rec = {"path": archive_path, "ok": ok, "msg": msg,
+               "size": size, "out": out if ok else None}
+
+        if ok:
+            files, total_sz = self.collect(out)
+            rec.update({"files": files, "ext_size": total_sz, "count": len(files)})
+            self.extracted.extend(files)
+            self.success += 1
+            print(f"    {GREEN}{B}✓{R}  {SAGE}Extracted {len(files)} file(s)  ·  {fmt_size(total_sz)}{R}")
+            self.results["ok"].append(rec)
         else:
-            self.failed_extractions += 1
-            print(f"   ❌ Failed: {message}")
-            self.extraction_results['failed'].append(result)
-        
-        self.extraction_results['all'].append(result)
-        return success
-    
-    def extract_all_archives(self, directory, recursive=True, password_policy='ask_each'):
-        """Extract all archives in the directory"""
+            self.failed += 1
+            print(f"    {RED}✗{R}  {ROSE}{msg}{R}")
+            self.results["fail"].append(rec)
+
+        self.results["all"].append(rec)
+        return ok
+
+    def extract_all(self, directory, recursive, pw_policy):
         archives = self.find_archives(directory, recursive)
-        self.total_archives = len(archives)
-        
+        self.total = len(archives)
+
         if not archives:
-            print("❌ No supported archive files found!")
+            print(f"\n  {ROSE}No supported archive files found here.{R}")
             return
-        
-        print(f"\n🎯 Found {self.total_archives} archive files")
-        print("Starting extraction...")
-        print("=" * 60)
-        
-        current_password = self.global_password if password_policy == 'use_global' else None
-        
-        for i, archive_path in enumerate(archives, 1):
-            print(f"\n[{i}/{self.total_archives}] ", end="")
-            self.extract_archive(archive_path, password_policy, current_password)
-    
-    def ask_copy_files(self):
-        """Ask user if they want to copy extracted files to a specific path"""
-        if not self.all_extracted_files:
-            print("\nNo extracted files to copy.")
-            return False
-        
-        total_files = len(self.all_extracted_files)
-        total_size = sum(file['size'] for file in self.all_extracted_files)
-        
-        print(f"\n📋 Extraction completed! Found {total_files} files ({self.format_size(total_size)})")
-        print("\nDo you want to copy all extracted files to a specific directory?")
-        print("1. Yes, copy all files to a single directory")
-        print("2. No, keep files in their original extraction folders")
-        print("3. Yes, but let me choose which files to copy")
-        
+
+        header(f"EXTRACTING  ·  {self.total} archive(s)", "◈")
+        pw = self.global_pw if pw_policy == "use_global" else None
+
+        for i, ap in enumerate(archives, 1):
+            print(f"\n  {MUTED}[ {i} / {self.total} ]{R}", end="")
+            self.extract_one(ap, pw_policy, pw)
+
+    # Menus
+    def menu_scan_mode(self):
+        header("SCAN MODE", "◈")
+        cwd = os.getcwd()
+        print(f"  {MUTED}Location  {AMBER}{cwd}{R}\n")
+        print(f"  {GOLD}1{R}  {CREAM}Current folder only{R}  {MUTED}(skip subfolders){R}")
+        print(f"  {GOLD}2{R}  {CREAM}All folders recursively{R}  {MUTED}(scan everything){R}")
+        rule("╌", color=AMBER)
         while True:
-            choice = input("\nEnter your choice (1-3): ").strip()
-            
-            if choice == '1':
-                return self.copy_all_files()
-            elif choice == '2':
-                print("Files will remain in their extraction folders.")
-                return False
-            elif choice == '3':
-                return self.selective_copy()
-            else:
-                print("Invalid choice! Please enter 1, 2, or 3.")
-    
-    def copy_all_files(self):
-        """Copy all extracted files to a user-specified directory"""
-        target_dir = input("\nEnter the target directory path: ").strip()
-        
-        # Validate target directory
-        if not os.path.exists(target_dir):
-            create_dir = input(f"Directory '{target_dir}' doesn't exist. Create it? (y/N): ").strip().lower()
-            if create_dir == 'y':
-                try:
-                    os.makedirs(target_dir, exist_ok=True)
-                    print(f"✅ Created directory: {target_dir}")
-                except OSError as e:
-                    print(f"❌ Failed to create directory: {e}")
-                    return False
-            else:
-                print("Copy operation cancelled.")
-                return False
-        
-        if not os.path.isdir(target_dir):
-            print(f"❌ '{target_dir}' is not a directory!")
-            return False
-        
-        print(f"\n📤 Copying {len(self.all_extracted_files)} files to: {target_dir}")
-        print("=" * 60)
-        
-        copied_files = 0
-        copied_size = 0
-        skipped_files = 0
-        
-        for i, file_info in enumerate(self.all_extracted_files, 1):
-            source_path = file_info['path']
-            filename = os.path.basename(source_path)
-            target_path = os.path.join(target_dir, filename)
-            
-            # Handle duplicate filenames
-            counter = 1
-            original_target = target_path
-            while os.path.exists(target_path):
-                name, ext = os.path.splitext(filename)
-                target_path = os.path.join(target_dir, f"{name}_{counter}{ext}")
-                counter += 1
-            
-            try:
-                shutil.copy2(source_path, target_path)
-                copied_files += 1
-                copied_size += file_info['size']
-                print(f"[{i}/{len(self.all_extracted_files)}] ✅ Copied: {filename}")
-            except Exception as e:
-                skipped_files += 1
-                print(f"[{i}/{len(self.all_extracted_files)}] ❌ Failed: {filename} - {e}")
-        
-        # Show copy summary
-        print(f"\n{'='*60}")
-        print("COPY SUMMARY")
-        print(f"{'='*60}")
-        print(f"Total files attempted:  {len(self.all_extracted_files)}")
-        print(f"Successfully copied:    {copied_files}")
-        print(f"Failed/Skipped:         {skipped_files}")
-        print(f"Total size copied:      {self.format_size(copied_size)}")
-        print(f"Target directory:       {target_dir}")
-        print(f"{'='*60}")
-        
-        return True
-    
-    def selective_copy(self):
-        """Let user select which files to copy"""
-        print(f"\n📋 Select files to copy ({len(self.all_extracted_files)} files found)")
-        print("Enter file numbers separated by commas (e.g., 1,3,5) or 'all' for all files")
-        
-        # Display files with numbers
-        for i, file_info in enumerate(self.all_extracted_files, 1):
-            filename = os.path.basename(file_info['path'])
-            print(f"  {i}. {filename} ({self.format_size(file_info['size'])})")
-        
+            c = input(f"\n  {TEAL}→  {R}").strip()
+            if c == "1": return False
+            if c == "2": return True
+            print(f"  {ROSE}Enter 1 or 2.{R}")
+
+    def menu_password_policy(self):
+        header("PASSWORD POLICY", "◈")
+        print(f"  {MUTED}How to handle encrypted archives?\n{R}")
+        print(f"  {GOLD}1{R}  {CREAM}Ask per archive{R}")
+        print(f"  {GOLD}2{R}  {CREAM}One global password{R}")
+        print(f"  {GOLD}3{R}  {CREAM}Skip encrypted files{R}")
+        rule("╌", color=AMBER)
         while True:
-            selection = input("\nEnter your selection: ").strip().lower()
-            
-            if selection == 'all':
-                selected_files = self.all_extracted_files
-                break
-            else:
-                try:
-                    indices = [int(idx.strip()) - 1 for idx in selection.split(',')]
-                    selected_files = [self.all_extracted_files[i] for i in indices if 0 <= i < len(self.all_extracted_files)]
-                    if selected_files:
-                        break
-                    else:
-                        print("No valid files selected. Please try again.")
-                except ValueError:
-                    print("Invalid input. Please enter numbers separated by commas or 'all'.")
-        
-        if not selected_files:
-            print("No files selected for copying.")
-            return False
-        
-        target_dir = input("\nEnter the target directory path: ").strip()
-        
-        # Validate target directory
-        if not os.path.exists(target_dir):
-            create_dir = input(f"Directory '{target_dir}' doesn't exist. Create it? (y/N): ").strip().lower()
-            if create_dir == 'y':
-                try:
-                    os.makedirs(target_dir, exist_ok=True)
-                    print(f"✅ Created directory: {target_dir}")
-                except OSError as e:
-                    print(f"❌ Failed to create directory: {e}")
-                    return False
-            else:
-                print("Copy operation cancelled.")
-                return False
-        
-        print(f"\n📤 Copying {len(selected_files)} files to: {target_dir}")
-        print("=" * 60)
-        
-        copied_files = 0
-        copied_size = 0
-        
-        for i, file_info in enumerate(selected_files, 1):
-            source_path = file_info['path']
-            filename = os.path.basename(source_path)
-            target_path = os.path.join(target_dir, filename)
-            
-            # Handle duplicate filenames
-            counter = 1
-            original_target = target_path
-            while os.path.exists(target_path):
-                name, ext = os.path.splitext(filename)
-                target_path = os.path.join(target_dir, f"{name}_{counter}{ext}")
-                counter += 1
-            
+            c = input(f"\n  {TEAL}→  {R}").strip()
+            if c == "1": return "ask_each"
+            if c == "2":
+                self.global_pw = input(f"  {TEAL}⚿  Global password: {R}").strip()
+                return "use_global"
+            if c == "3": return "skip_all"
+            print(f"  {ROSE}Enter 1, 2, or 3.{R}")
+
+    def menu_copy(self):
+        if not self.extracted: return
+        total_sz = sum(f["size"] for f in self.extracted)
+        header(f"COPY FILES  ·  {len(self.extracted)} file(s)  ·  {fmt_size(total_sz)}", "◈")
+        print(f"  {GOLD}1{R}  {CREAM}Copy all to a folder{R}")
+        print(f"  {GOLD}2{R}  {CREAM}Pick specific files{R}")
+        print(f"  {GOLD}3{R}  {CREAM}Leave in place{R}")
+        rule("╌", color=AMBER)
+        while True:
+            c = input(f"\n  {TEAL}→  {R}").strip()
+            if c == "1": self._do_copy(self.extracted); return
+            if c == "2": self._selective(); return
+            if c == "3":
+                print(f"\n  {SAGE}✓  Files remain in extraction folders.{R}")
+                return
+            print(f"  {ROSE}Enter 1, 2, or 3.{R}")
+
+    def _ask_target(self):
+        t = input(f"  {TEAL}⤷  Target folder: {R}").strip().strip('"').strip("'")
+        if not os.path.exists(t):
+            c = input(f"  {AMBER}Doesn't exist — create it? [y/N]: {R}").strip().lower()
+            if c == "y":
+                try: os.makedirs(t, exist_ok=True); print(f"  {SAGE}✓  Created.{R}"); return t
+                except OSError as e: print(f"  {ROSE}✗  {e}{R}"); return None
+            return None
+        if not os.path.isdir(t): print(f"  {ROSE}Not a directory.{R}"); return None
+        return t
+
+    def _do_copy(self, file_list):
+        target = self._ask_target()
+        if not target: return
+        copied, skipped, size = 0, 0, 0
+        n = len(file_list)
+        print()
+        for i, fi in enumerate(file_list, 1):
+            src  = fi["path"]
+            name = os.path.basename(src)
+            dst  = os.path.join(target, name)
+            k = 1
+            while os.path.exists(dst):
+                stem, ext = os.path.splitext(name)
+                dst = os.path.join(target, f"{stem}_{k}{ext}"); k += 1
+            spin_progress(i, n, name)
             try:
-                shutil.copy2(source_path, target_path)
-                copied_files += 1
-                copied_size += file_info['size']
-                print(f"[{i}/{len(selected_files)}] ✅ Copied: {filename}")
-            except Exception as e:
-                print(f"[{i}/{len(selected_files)}] ❌ Failed: {filename} - {e}")
-        
-        print(f"\n✅ Successfully copied {copied_files}/{len(selected_files)} files")
-        print(f"📦 Total size: {self.format_size(copied_size)}")
-        
-        return True
-    
+                shutil.copy2(src, dst)
+                copied += 1; size += fi["size"]
+            except Exception: skipped += 1
+        print(" " * 72, end="\r")
+        print(f"  {GREEN}✓{R}  {SAGE}Copied {copied}/{n} file(s)  ·  {fmt_size(size)}{R}")
+        if skipped: print(f"  {ROSE}✗  {skipped} failed{R}")
+        print(f"  {MUTED}⤷ {target}{R}")
+
+    def _selective(self):
+        header(f"SELECT FILES  ·  {len(self.extracted)} available", "◈")
+        for i, fi in enumerate(self.extracted, 1):
+            name = os.path.basename(fi["path"])
+            print(f"  {GOLD}{i:>3}{R}  {CREAM}{name}{R}  {MUTED}{fmt_size(fi['size'])}{R}")
+        rule("╌", color=AMBER)
+        print(f"  {MUTED}Numbers separated by commas, or 'all'{R}\n")
+        while True:
+            raw = input(f"  {TEAL}→  {R}").strip().lower()
+            if raw == "all": self._do_copy(self.extracted); return
+            try:
+                sel = [self.extracted[int(x.strip())-1] for x in raw.split(",")
+                       if x.strip() and 0 < int(x.strip()) <= len(self.extracted)]
+                if sel: self._do_copy(sel); return
+                print(f"  {ROSE}No valid files selected.{R}")
+            except (ValueError, IndexError):
+                print(f"  {ROSE}Invalid input.{R}")
+
     def show_summary(self):
-        """Display comprehensive extraction summary"""
-        print(f"\n{'='*80}")
-        print("EXTRACTION SUMMARY")
-        print(f"{'='*80}")
-        
-        print(f"Total archives found:     {self.total_archives}")
-        print(f"Successfully extracted:   {self.successful_extractions}")
-        print(f"Failed extractions:       {self.failed_extractions}")
-        print(f"Password protected:       {self.password_protected}")
-        
-        if self.successful_extractions > 0:
-            total_archive_size = sum(item['size'] for item in self.extraction_results['success'])
-            total_extracted_size = sum(item['extracted_size'] for item in self.extraction_results['success'])
-            total_files = sum(item['file_count'] for item in self.extraction_results['success'])
-            
-            print(f"Total archives size:      {self.format_size(total_archive_size)}")
-            print(f"Total extracted size:     {self.format_size(total_extracted_size)}")
-            print(f"Total files extracted:    {total_files}")
-        
-        success_rate = (self.successful_extractions / self.total_archives * 100) if self.total_archives > 0 else 0
-        print(f"Success rate:             {success_rate:.1f}%")
-        
-        # Show failed extractions if any
-        if self.extraction_results['failed']:
-            print(f"\n❌ Failed extractions ({self.failed_extractions}):")
-            for failed in self.extraction_results['failed']:
-                print(f"   - {os.path.basename(failed['path'])}: {failed['message']}")
-        
-        # Show successful extractions if any
-        if self.extraction_results['success']:
-            print(f"\n✅ Successful extractions ({self.successful_extractions}):")
-            for success in self.extraction_results['success']:
-                file_count = success.get('file_count', 0)
-                print(f"   - {os.path.basename(success['path'])} → {file_count} files")
-        
-        print(f"{'='*80}")
-        
-        if self.successful_extractions > 0:
-            print("🎉 Extraction completed successfully!")
+        header("SUMMARY", "◈")
+        total_in = sum(r["size"] for r in self.results["all"])
+        total_out = sum(r.get("ext_size",0) for r in self.results["ok"])
+        total_f = sum(r.get("count",0) for r in self.results["ok"])
+        rate = (self.success / self.total * 100) if self.total else 0
+
+        col_w = 24
+        rows = [
+            ("Archives found",    str(self.total)),
+            ("Extracted",         f"{GREEN}{B}{self.success}{R}"),
+            ("Failed",            f"{(RED if self.failed else SAGE)}{self.failed}{R}"),
+            ("Encrypted",         str(self.pw_count)),
+            ("Input size",        fmt_size(total_in)),
+            ("Output size",       fmt_size(total_out)),
+            ("Files unpacked",    str(total_f)),
+            ("Success rate",      f"{rate:.0f}%"),
+        ]
+        for label, val in rows:
+            print(f"  {MUTED}{label:<{col_w}}{R}{CREAM}{val}{R}")
+
+        if self.results["fail"]:
+            print(f"\n  {ROSE}Failed:{R}")
+            for r in self.results["fail"]:
+                print(f"  {MUTED}  ·  {os.path.basename(r['path'])} — {r['msg']}{R}")
+
+        if self.results["ok"]:
+            print(f"\n  {SAGE}Extracted:{R}")
+            for r in self.results["ok"]:
+                print(f"  {MUTED}  ·  {os.path.basename(r['path'])}  ⤷  {r.get('count',0)} file(s){R}")
+
+        rule()
+        if self.success > 0:
+            print(f"\n  {AMBER}{B}All done! 🎉{R}")
         else:
-            print("ℹ️  No files were extracted.")
+            print(f"\n  {MUTED}Nothing was extracted.{R}")
+
+
+def check_deps():
+    try: import patoolib; return True
+    except ImportError:
+        print(f"\n  {ROSE}Missing: patool{R}  →  {MUTED}pip install patool{R}")
+        return False
 
 def main():
-    print("📦 Archive File Extractor")
-    print("=" * 50)
-    print("Supported formats: ZIP, RAR, 7Z, TAR, GZ, BZ2, XZ")
-    print(f"Platform: {platform.system()}")
-    print("Using: 7-Zip (recommended) + patool (fallback)")
-    print("=" * 50)
-    
-    # Get current directory
-    current_dir = os.getcwd()
-    print(f"Current directory: {current_dir}")
-    
-    extractor = ArchiveExtractor()
-    
-    try:
-        # Ask for scan mode
-        recursive = extractor.ask_scan_mode()
-        scan_mode = "current directory and all subdirectories" if recursive else "current directory only"
-        print(f"\nSelected scan mode: {scan_mode}")
-        
-        # Ask for password policy
-        password_policy = extractor.ask_password_policy()
-        
-        # Extract archives
-        extractor.extract_all_archives(current_dir, recursive, password_policy)
-        
-        # Ask about copying files
-        extractor.ask_copy_files()
-        
-        # Show summary
-        extractor.show_summary()
-        
-    except KeyboardInterrupt:
-        print("\n\nProcess interrupted by user.")
-        extractor.show_summary()
-    except Exception as e:
-        print(f"\n❌ Error: {e}")
-        sys.exit(1)
+    clear(); banner()
+    cwd = os.getcwd()
+    print(f"  {MUTED}Platform   {AMBER}{platform.system()}{R}")
+    print(f"  {MUTED}Directory  {AMBER}{cwd}{R}")
+    print(f"  {MUTED}Formats    {AMBER}ZIP · RAR · 7Z · TAR · GZ · BZ2 · XZ{R}")
+    print(f"  {MUTED}Engine     {AMBER}7-Zip → patool{R}")
 
-# Check if required libraries are installed
-def check_dependencies():
-    missing = []
-    
+    ex = ArchiveExtractor()
     try:
-        import patoolib
-    except ImportError:
-        missing.append("patool")
-    
-    if missing:
-        print("❌ Missing required libraries. Please install them using:")
-        print("pip install patool")
-        return False
-    
-    return True
+        recursive = ex.menu_scan_mode()
+        pw_policy = ex.menu_password_policy()
+        clear(); banner()
+        ex.extract_all(cwd, recursive, pw_policy)
+        ex.menu_copy()
+        clear(); banner()
+        ex.show_summary()
+    except KeyboardInterrupt:
+        print(f"\n\n  {AMBER}Interrupted.{R}")
+        ex.show_summary()
+    except Exception as e:
+        print(f"\n  {ROSE}Error: {e}{R}"); sys.exit(1)
 
 if __name__ == "__main__":
-    if check_dependencies():
-        main()
+    if check_deps(): main()
